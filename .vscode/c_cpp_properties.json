@@ -1,0 +1,12 @@
+{
+  "configurations": [
+    {
+      "name": "ESP-IDF",
+      "compilerPath": "/Users/fbourke/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20260121/riscv32-esp-elf/bin/riscv32-esp-elf-gcc",
+      "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+      "cStandard": "gnu17",
+      "intelliSenseMode": "gcc-x64"
+    }
+  ],
+  "version": 4
+}
