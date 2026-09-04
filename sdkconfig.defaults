@@ -4,3 +4,4 @@ CONFIG_IDF_TARGET="esp32c6"
 # so the command console (see console.c) has working stdin. UART0 isn't
 # wired out on this board.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
