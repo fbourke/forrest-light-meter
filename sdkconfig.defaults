@@ -1,1 +1,6 @@
 CONFIG_IDF_TARGET="esp32c6"
+
+# Primary console over the native USB port (same port used for flashing),
+# so the command console (see console.c) has working stdin. UART0 isn't
+# wired out on this board.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
