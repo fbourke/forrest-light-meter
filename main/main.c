@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include "esp_log.h"
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
@@ -17,6 +18,29 @@
 
 static const char *TAG = "light_meter";
 
+// Prints which addresses ACK on the bus, so a wiring/address mismatch (e.g.
+// the ADS1115's ADDR pin not actually tied to GND) shows up at a glance
+// instead of as a wall of NACK errors from whichever driver tries it first.
+static void i2c_bus_scan(i2c_master_bus_handle_t bus_handle)
+{
+    printf("I2C scan (SDA=%d SCL=%d):\n     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f\n",
+           I2C_SDA_GPIO, I2C_SCL_GPIO);
+    for (int hi = 0; hi < 8; hi++) {
+        printf("%02x: ", hi * 16);
+        for (int lo = 0; lo < 16; lo++) {
+            uint8_t addr = hi * 16 + lo;
+            if (addr < 0x08 || addr > 0x77) {
+                printf("   ");
+            } else if (i2c_master_probe(bus_handle, addr, 50) == ESP_OK) {
+                printf("%02x ", addr);
+            } else {
+                printf("-- ");
+            }
+        }
+        printf("\n");
+    }
+}
+
 void app_main(void)
 {
     i2c_master_bus_config_t bus_config = {
@@ -29,6 +53,8 @@ void app_main(void)
     };
     i2c_master_bus_handle_t bus_handle;
     ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &bus_handle));
+
+    i2c_bus_scan(bus_handle);
 
     veml7700_t sensor;
     ESP_ERROR_CHECK(veml7700_init(&sensor, bus_handle));

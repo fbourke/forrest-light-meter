@@ -188,7 +188,12 @@ static void metering_task(void *arg)
         integrator_sample_t sample;
         esp_err_t err = integrator_poll(&sample);
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "ADC read failed: %s", esp_err_to_name(err));
+            // Rate-limited: a wiring/address fault fails every poll, and at
+            // POLL_PERIOD_MS that would otherwise flood the console.
+            if (xTaskGetTickCount() - last_log >= pdMS_TO_TICKS(1000)) {
+                ESP_LOGE(TAG, "ADC read failed: %s", esp_err_to_name(err));
+                last_log = xTaskGetTickCount();
+            }
             vTaskDelay(pdMS_TO_TICKS(POLL_PERIOD_MS));
             continue;
         }

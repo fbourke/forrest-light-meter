@@ -17,28 +17,37 @@ static const char *TAG = "integrator";
 static portMUX_TYPE s_latest_lock = portMUX_INITIALIZER_UNLOCKED;
 static integrator_sample_t s_latest;
 
-// Reset transistor (Q1) base drive. Active high: shorts the integrator
-// feedback cap (C4) to discharge it and pull ADC_OUT back near CHARGE NODE.
+// Reset FET gate drive. Active high: shorts the integrator feedback cap
+// (C4) to discharge it and pull ADC_OUT back near CHARGE NODE. Was a BJT
+// (Q1) with a base resistor; swapped for a FET so this switches fast enough
+// for ~1ms exposures - see RESET_SETTLE_US.
 #define RESET_GPIO 2
 
-// Rather than trust a fixed pulse width, hold the transistor on and poll the
+// Rather than trust a fixed pulse width, hold the switch on and poll the
 // ADC until the voltage actually drops - a blind pulse can't tell a real
-// discharge from a base-drive/transistor timing issue that leaves it stuck.
+// discharge from a drive/switching issue that leaves it stuck. Each poll is
+// a near-instant internal-ADC read, so pace attempts a little rather than
+// hammer the ADC pointlessly.
 #define RESET_TARGET_MV 500
-#define RESET_POLL_US 200
+#define RESET_POLL_US 20
 #define RESET_TIMEOUT_US 50000
 
-// Releasing Q1 leaves a brief settling transient on ADC_OUT (charge
-// injection / op-amp recovery) before it reaches its true resting baseline.
-// Callers that treat "just after reset" as the zero point (metering.c) would
-// otherwise see that transient misread as several hundred mV of signal.
+// Releasing the reset switch leaves a brief settling transient on ADC_OUT
+// (charge injection / op-amp recovery) before it reaches its true resting
+// baseline. Callers that treat "just after reset" as the zero point
+// (metering.c) would otherwise see that transient misread as signal.
+// Measured: with the FET this settles on roughly the same timescale the BJT
+// needed (~15-20ms) - dropping this to 200us produced a huge, exponential-
+// looking "delta" on short exposures (up to 240mV, plateauing over ~20ms)
+// that tracked nothing about the real ambient rate. That rules out the
+// switch itself as the bottleneck; something else (op-amp recovery, most
+// likely) dominates the settling time.
+// Also retested at 200us after raising the reset baseline to 300mV (away
+// from the LM358's near-ground crossover region) - identical artifact, same
+// ~270mV plateau over the same ~15-20ms. So it isn't the crossover region
+// either; this looks like a more basic bandwidth/slew-rate recovery limit
+// of the LM358 itself. Back to a safe value; the real fix is the op-amp.
 #define RESET_SETTLE_US 20000
-
-// ADC_OUT, downstream of U2A/R4/C5.
-#define ADC_UNIT ADC_UNIT_1
-#define ADC_CHANNEL ADC_CHANNEL_3 // GPIO3
-#define ADC_ATTEN ADC_ATTEN_DB_12 // full 0-3.3V range
-#define ADC_BITWIDTH ADC_BITWIDTH_DEFAULT
 
 // D1's cathode is at CHARGE_NODE and its anode is grounded, so light current
 // only ever sinks charge out of the summing node - the feedback cap can only
@@ -55,6 +64,14 @@ static int s_saturation_high_mv = SATURATION_HIGH_MV_DEFAULT;
 // Number of samples used for the linear-regression slope estimate. At the
 // caller's ~20ms poll period this is roughly a 320ms window.
 #define SLOPE_WINDOW 16
+
+// ADC_OUT, downstream of U2A/R4/C5, back on the ESP32-C6's internal ADC
+// (GPIO3) - fast enough (microsecond-scale reads) to chase ~1ms exposures,
+// which the ADS1115's ~1.2ms-per-conversion couldn't keep up with.
+#define ADC_UNIT ADC_UNIT_1
+#define ADC_CHANNEL ADC_CHANNEL_3 // GPIO3
+#define ADC_ATTEN ADC_ATTEN_DB_12 // full 0-3.3V range
+#define ADC_BITWIDTH ADC_BITWIDTH_DEFAULT
 
 static adc_oneshot_unit_handle_t s_adc_handle;
 static adc_cali_handle_t s_cali_handle;
@@ -156,7 +173,7 @@ void integrator_reset(void)
         }
     }
     if (mv > RESET_TARGET_MV) {
-        ESP_LOGW(TAG, "Reset did not bring ADC_OUT below %d mV (stuck at %d mV) - check Q1/R3",
+        ESP_LOGW(TAG, "Reset did not bring ADC_OUT below %d mV (stuck at %d mV) - check the reset FET drive",
                  RESET_TARGET_MV, mv);
     }
 

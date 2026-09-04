@@ -12,7 +12,8 @@ typedef struct {
     bool reset_triggered; // true if this poll caused an auto-reset (saturation)
 } integrator_sample_t;
 
-// Configures the ADC_OUT input and the integrator RESET output.
+// Configures the ADC_OUT input (internal ADC, GPIO3) and the integrator
+// RESET output.
 esp_err_t integrator_init(void);
 
 // Discharges the integrator cap (pulses RESET) and clears the slope history.

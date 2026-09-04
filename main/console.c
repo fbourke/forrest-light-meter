@@ -7,7 +7,7 @@
 #include "console.h"
 #include "metering.h"
 
-#define LINE_MAX 64
+#define CONSOLE_LINE_MAX 64
 
 static void print_help(void)
 {
@@ -64,7 +64,7 @@ static void console_task(void *arg)
     (void)arg;
     print_help();
 
-    char line[LINE_MAX];
+    char line[CONSOLE_LINE_MAX];
     size_t len = 0;
 
     while (1) {
