@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 #include "esp_err.h"
 
 // One integrator reading: the filtered ADC_OUT voltage plus the current
@@ -36,6 +37,12 @@ void integrator_set_saturation_threshold_mv(int mv);
 // sample window, and auto-resets if the output has saturated near a rail.
 // Call this on a steady period (see INTEGRATOR_SAMPLE_PERIOD_MS).
 esp_err_t integrator_poll(integrator_sample_t *out);
+
+// Total resets since boot, discharges and saturation trips alike. Unlike
+// integrator_sample_t.reset_triggered (which integrator_poll() consumes, so
+// only one caller ever sees a given reset) this is non-destructive, letting
+// the UI observe resets without stealing them from the metering task.
+uint32_t integrator_reset_count(void);
 
 // Returns the most recent sample computed by integrator_poll(), for callers
 // (e.g. the VEML7700 loop) that want to cross-reference it against another
