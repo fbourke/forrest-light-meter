@@ -26,22 +26,28 @@ static const char *TAG = "integrator";
 // Rather than trust a fixed pulse width, hold the switch on and watch the
 // sample stream until the voltage actually drops - a blind pulse can't tell
 // a real discharge from a drive/switching issue that leaves it stuck.
-#define RESET_TARGET_MV 500
+// The true rail is Vref, measured 300.8mV on a bench DMM; 500mV left the
+// reset free to land anywhere in a 200mV range, adding baseline-to-baseline
+// jitter on top of whatever noise floor the ADC/switch contribute. A small
+// margin above the measured value keeps this reliably crossable despite a
+// few mV of noise, without giving up much of that repeatability.
+#define RESET_TARGET_MV 310
 #define RESET_TIMEOUT_US 50000
 
 // Releasing the reset switch leaves a brief settling transient on ADC_OUT
 // (charge injection / op-amp recovery) before it reaches its true resting
 // baseline. Callers that treat "just after reset" as the zero point
 // (metering.c) would otherwise see that transient misread as signal.
-// Measured: with the FET this settles on roughly the same timescale the BJT
-// needed (~15-20ms) - dropping this to 200us produced a huge, exponential-
-// looking "delta" on short exposures (up to 240mV, plateauing over ~20ms)
-// that tracked nothing about the real ambient rate. That rules out the
-// switch itself as the bottleneck. The LM358's slew rate is 0.5 V/us, which
-// is 1000x too fast to explain a 7ms fall, so the remaining suspects are the
-// R4/C5 output filter and the LM358's ~50uA sink limit near ground. Both
-// disappear with a rail-to-rail CMOS part; re-measure this after that swap.
-#define RESET_SETTLE_US 20000
+// With the LM358 this needed ~15-20ms regardless of switch (BJT or FET) -
+// pinned on the op-amp, not the reset path. On the ADA4511 (rail-to-rail
+// CMOS, 19V/us) + Si3402: tested 500/100/40us with the ambient
+// 1/2/4/8/16/32/64/128ms sweep and got the *same* result at all three - a
+// small (~3-20mV), roughly duration-independent excess over the live rate,
+// not the old plateau-then-flatten shape. That points to fixed switch
+// charge injection plus ADC noise, not a settling time constant, so this
+// isn't the bottleneck anymore. 100us kept as headroom rather than cutting
+// to the tested 40us floor.
+#define RESET_SETTLE_US 100
 
 // D1's cathode is at CHARGE_NODE and its anode is grounded, so light current
 // only ever sinks charge out of the summing node - the feedback cap can only

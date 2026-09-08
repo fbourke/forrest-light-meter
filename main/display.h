@@ -30,6 +30,11 @@ static inline uint16_t display_rgb(uint8_t r, uint8_t g, uint8_t b)
 // Brings up the SPI bus, the panel and the backlight, and clears to black.
 esp_err_t display_init(void);
 
+// Backlight brightness, 0-100. PWM rather than on/off - the panel runs hot
+// at full brightness, and there's no real reason to drive it that hard for
+// a bench setup.
+void display_set_backlight(uint8_t percent);
+
 // All drawing goes to an offscreen framebuffer; display_flush() sends it.
 void display_clear(uint16_t color);
 void display_fill_rect(int x, int y, int w, int h, uint16_t color);

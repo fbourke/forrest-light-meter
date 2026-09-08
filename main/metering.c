@@ -27,8 +27,13 @@ static const char *TAG = "metering";
 #define UNCORDED_JUMP_MARGIN_MV 150.0f
 
 // Averaged reads for the start/end of a timed capture, to resolve small
-// deltas (short exposures) that single-sample ADC noise would swamp.
-#define CAPTURE_OVERSAMPLE 8
+// deltas (short exposures) that single-sample ADC noise would swamp. At
+// SAMPLE_RATE_HZ (see integrator.c) each read takes samples*20us of real
+// time - 64 samples is 1.28ms per endpoint, on top of whatever the exposure
+// itself takes. That's fine now that reset_and_get_baseline()/t0 anchor the
+// timing so this window doesn't bias the measured span (see precise_wait_
+// until's caller); it wasn't safe to raise before that fix.
+#define CAPTURE_OVERSAMPLE 64
 
 // The FreeRTOS tick (often 10ms, see CONFIG_FREERTOS_HZ) is too coarse for
 // photographic exposure times - pdMS_TO_TICKS() truncates, so e.g. an 8ms
@@ -37,14 +42,17 @@ static const char *TAG = "metering";
 // one tick remains, then a precise busy-wait for the last stretch. The
 // margin has to clear a full tick period, or vTaskDelay(1) can itself
 // overshoot the target by almost a tick.
+//
+// Takes an absolute deadline, not a duration - a relative "wait N ms from
+// now" would double-count the time integrator_read_mv_oversampled() already
+// spent acquiring the baseline (see reset_and_get_baseline()).
 #define COARSE_WAIT_MARGIN_US 15000
-static void precise_wait_ms(uint32_t ms)
+static void precise_wait_until(int64_t target_us)
 {
-    int64_t target = esp_timer_get_time() + (int64_t)ms * 1000;
-    while (esp_timer_get_time() < target - COARSE_WAIT_MARGIN_US) {
+    while (esp_timer_get_time() < target_us - COARSE_WAIT_MARGIN_US) {
         vTaskDelay(1);
     }
-    while (esp_timer_get_time() < target) {
+    while (esp_timer_get_time() < target_us) {
         esp_rom_delay_us(50);
     }
 }
@@ -68,9 +76,18 @@ static volatile bool s_live_log_enabled = false;
 // integrator_reset() only guarantees landing at or below RESET_TARGET_MV
 // (see integrator.c) - it can stop anywhere in that range, so the actual
 // post-reset baseline has to be measured, not assumed to be 0.
-static esp_err_t reset_and_get_baseline(int *start_mv)
+//
+// t0_out marks when baseline acquisition *starts*, matching how the caller
+// marks t1 right before the end read starts (not after it finishes). Both
+// oversampled reads represent the ramp's value at roughly the center of
+// their CAPTURE_OVERSAMPLE-sample window, so anchoring both timestamps the
+// same way (call time, not return time) makes those two half-window offsets
+// cancel in the t1-t0 delta - otherwise they'd add, inflating the measured
+// span by a full window's worth of extra signal on every capture.
+static esp_err_t reset_and_get_baseline(int *start_mv, int64_t *t0_out)
 {
     integrator_reset();
+    *t0_out = esp_timer_get_time();
     return integrator_read_mv_oversampled(start_mv, CAPTURE_OVERSAMPLE);
 }
 
@@ -78,12 +95,15 @@ static void run_ambient_capture(uint32_t exposure_ms)
 {
     ESP_LOGI(TAG, "Ambient capture: exposing %u ms...", (unsigned)exposure_ms);
     int start_mv;
-    if (reset_and_get_baseline(&start_mv) != ESP_OK) {
+    int64_t t0;
+    if (reset_and_get_baseline(&start_mv, &t0) != ESP_OK) {
         ESP_LOGE(TAG, "Ambient capture failed: could not read baseline");
         return;
     }
-    int64_t t0 = esp_timer_get_time();
-    precise_wait_ms(exposure_ms);
+    // Absolute deadline anchored to t0, not "exposure_ms from now" - the
+    // baseline read above already consumed some real time acquiring its
+    // average, and that has to come out of the wait, not stack on top of it.
+    precise_wait_until(t0 + (int64_t)exposure_ms * 1000);
     int64_t t1 = esp_timer_get_time(); // mark end-of-exposure before the read adds its own delay
 
     int end_mv;
@@ -107,13 +127,13 @@ static void run_corded_capture(uint32_t exposure_ms)
 {
     ESP_LOGI(TAG, "Corded capture: exposure %u ms...", (unsigned)exposure_ms);
     int start_mv;
-    if (reset_and_get_baseline(&start_mv) != ESP_OK) {
+    int64_t t0;
+    if (reset_and_get_baseline(&start_mv, &t0) != ESP_OK) {
         ESP_LOGE(TAG, "Corded capture failed: could not read baseline");
         return;
     }
     fire_trigger_stub();
-    int64_t t0 = esp_timer_get_time();
-    precise_wait_ms(exposure_ms);
+    precise_wait_until(t0 + (int64_t)exposure_ms * 1000);
     int64_t t1 = esp_timer_get_time();
 
     int end_mv;

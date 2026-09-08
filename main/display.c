@@ -3,7 +3,7 @@
 #include <math.h>
 #include <string.h>
 
-#include "driver/gpio.h"
+#include "driver/ledc.h"
 #include "driver/spi_master.h"
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_io.h"
@@ -35,17 +35,40 @@ static const char *TAG = "display";
 // Flushed in horizontal bands so no single SPI transfer has to be huge.
 #define BAND_ROWS 40
 
+// Backlight PWM. 5kHz is well above anything visible/audible; 8-bit duty is
+// plenty of resolution for a brightness knob.
+#define BL_LEDC_TIMER   LEDC_TIMER_0
+#define BL_LEDC_MODE    LEDC_LOW_SPEED_MODE
+#define BL_LEDC_CHANNEL LEDC_CHANNEL_0
+#define BL_LEDC_FREQ_HZ 5000
+#define BL_LEDC_RES     LEDC_TIMER_8_BIT
+
+// Default kept well below full brightness - the panel runs hot driven at
+// 100%, and a bench setup has no reason to push it that hard.
+#define BL_DEFAULT_PERCENT 40
+
 static esp_lcd_panel_handle_t s_panel;
 static uint16_t *s_fb;
 
 esp_err_t display_init(void)
 {
-    gpio_config_t bl = {
-        .pin_bit_mask = 1ULL << PIN_BL,
-        .mode = GPIO_MODE_OUTPUT,
+    ledc_timer_config_t bl_timer = {
+        .speed_mode = BL_LEDC_MODE,
+        .timer_num = BL_LEDC_TIMER,
+        .duty_resolution = BL_LEDC_RES,
+        .freq_hz = BL_LEDC_FREQ_HZ,
+        .clk_cfg = LEDC_AUTO_CLK,
     };
-    ESP_ERROR_CHECK(gpio_config(&bl));
-    gpio_set_level(PIN_BL, 0);  // stay dark until there is something to show
+    ESP_ERROR_CHECK(ledc_timer_config(&bl_timer));
+
+    ledc_channel_config_t bl_channel = {
+        .gpio_num = PIN_BL,
+        .speed_mode = BL_LEDC_MODE,
+        .channel = BL_LEDC_CHANNEL,
+        .timer_sel = BL_LEDC_TIMER,
+        .duty = 0,  // stay dark until there is something to show
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&bl_channel));
 
     s_fb = heap_caps_malloc(DISPLAY_WIDTH * DISPLAY_HEIGHT * sizeof(uint16_t),
                             MALLOC_CAP_DMA);
@@ -103,10 +126,21 @@ esp_err_t display_init(void)
 
     display_clear(DISPLAY_BLACK);
     err = display_flush();
-    gpio_set_level(PIN_BL, 1);
-    ESP_LOGI(TAG, "ST7789 %dx%d up on SPI%d", DISPLAY_WIDTH, DISPLAY_HEIGHT,
-             LCD_HOST + 1);
+    display_set_backlight(BL_DEFAULT_PERCENT);
+    ESP_LOGI(TAG, "ST7789 %dx%d up on SPI%d, backlight %d%%", DISPLAY_WIDTH,
+             DISPLAY_HEIGHT, LCD_HOST + 1, BL_DEFAULT_PERCENT);
     return err;
+}
+
+void display_set_backlight(uint8_t percent)
+{
+    if (percent > 100) {
+        percent = 100;
+    }
+    uint32_t max_duty = (1u << BL_LEDC_RES) - 1;
+    uint32_t duty = (max_duty * percent) / 100;
+    ledc_set_duty(BL_LEDC_MODE, BL_LEDC_CHANNEL, duty);
+    ledc_update_duty(BL_LEDC_MODE, BL_LEDC_CHANNEL);
 }
 
 void display_clear(uint16_t color)

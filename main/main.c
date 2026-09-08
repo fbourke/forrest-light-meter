@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <math.h>
 #include "esp_log.h"
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
@@ -38,6 +39,26 @@ static void draw_right(int y, const char *str, int scale, uint16_t color)
 // readings. A placeholder so the LED path can be watched on screen; it is not
 // a calibration and will move once the op-amp swap settles the analog side.
 #define LED_LUX_PER_MV_PER_S 1.35f
+
+// Backlight follows ambient brightness on a log scale (lux spans orders of
+// magnitude, a linear map would be all-bright or all-dark) - dim enough to
+// stay legible in a dark room, capped well under 100% since full brightness
+// is most of why the panel runs hot.
+#define BACKLIGHT_MIN_PERCENT 1
+#define BACKLIGHT_MAX_PERCENT 70
+#define BACKLIGHT_LUX_MIN 50.0f
+#define BACKLIGHT_LUX_MAX 10000.0f
+
+static uint8_t backlight_percent_for_lux(float lux)
+{
+    if (lux < BACKLIGHT_LUX_MIN) {
+        lux = BACKLIGHT_LUX_MIN;
+    } else if (lux > BACKLIGHT_LUX_MAX) {
+        lux = BACKLIGHT_LUX_MAX;
+    }
+    float frac = log10f(lux / BACKLIGHT_LUX_MIN) / log10f(BACKLIGHT_LUX_MAX / BACKLIGHT_LUX_MIN);
+    return (uint8_t)(BACKLIGHT_MIN_PERCENT + frac * (BACKLIGHT_MAX_PERCENT - BACKLIGHT_MIN_PERCENT));
+}
 
 static void draw_meter(float lux, const integrator_sample_t *led,
                        bool reset_blink, uint32_t reset_count)
@@ -168,6 +189,7 @@ void app_main(void)
             bool blinked = resets != last_reset_count;
             last_reset_count = resets;
             draw_meter(lux, &led, blinked, resets);
+            display_set_backlight(backlight_percent_for_lux(lux));
 
             // Paired with metering.c's live-log flag ("verbose"/"quiet" on
             // the console) so this doesn't scroll the console independently.
